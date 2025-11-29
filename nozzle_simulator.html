@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Convergent–Divergent Nozzle Simulator</title>
+  <style>
+    :root {
+      --bg: #0f1724;
+      --card: #0b1220;
+      --accent: #06b6d4;
+      --muted: #94a3b8;
+      --glass: rgba(255,255,255,0.04);
+      --tooltip-bg: #1e293b;
+    }
+    html, body {height:100%;margin:0;font-family:'Inter',ui-sans-serif,system-ui,Arial;background:radial-gradient(circle at top left,#0a192f,#020617);color:#e2e8f0;}
+    .app{max-width:1100px;margin:30px auto;padding:24px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02));box-shadow:0 10px 40px rgba(2,6,23,0.8);backdrop-filter:blur(6px);}
+    h1{font-weight:600;margin-bottom:4px;}
+    .small{font-size:13px;color:var(--muted);}
+    .row{display:flex;gap:16px;flex-wrap:wrap;}
+    .panel{background:var(--card);padding:16px;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.05);}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;}
+    .tooltip{position:relative;display:inline-block;cursor:help;color:var(--accent);}
+    .tooltip .tooltiptext{visibility:hidden;width:220px;background-color:var(--tooltip-bg);color:#f8fafc;text-align:left;border-radius:6px;padding:8px;position:absolute;z-index:1;bottom:125%;left:50%;margin-left:-110px;opacity:0;transition:opacity 0.3s;font-size:12px;}
+    .tooltip:hover .tooltiptext{visibility:visible;opacity:1;}
+    input,select{width:100%;padding:8px;border-radius:6px;border:none;background:var(--glass);color:inherit;}
+    .btn{padding:8px 14px;border-radius:8px;background:var(--accent);color:#012;font-weight:600;cursor:pointer;border:none;transition:background 0.2s ease;}
+    .btn:hover{background:#22d3ee;}
+    canvas{width:100%;height:260px;border-radius:8px;background:#0b1220;margin-top:10px;box-shadow:inset 0 0 6px rgba(0,0,0,0.5);image-rendering:crisp-edges;}
+    .status{font-size:13px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.05);margin-top:10px;}
+    footer{margin-top:14px;color:var(--muted);font-size:12px;text-align:center;}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Convergent–Divergent Nozzle Simulator</h1>
+    <p class="normal">This simulator allows you to visualise the effects of changes in pressure ratio discussed in Lecture 3: "Choked Flow - Part I"</p>
+    <p class="small">Interactive 1D isentropic flow solver with optional normal shock approximation. Hover on Input labels for more information. Hover over plots to view values.</p>
+ 
+    <div class="row">
+      <div class="panel" style="flex:0.45;min-width:280px">
+        <h3>Inputs</h3>
+        <label class="tooltip">Total pressure p₀ (kPa)<span class="tooltiptext">Stagnation pressure, the pressure the flow would have if brought to rest isentropically.</span></label>
+        <input id="p0" type="number" step="any" value="101.325" />
+        <label class="tooltip">Total temperature T₀ (K)<span class="tooltiptext">Stagnation temperature, the temperature the flow would have if brought to rest adiabatically.</span></label>
+        <input id="T0" type="number" step="any" value="300" />
+        <label class="tooltip">Back pressure p<sub>b</sub> (kPa)<span class="tooltiptext">Static pressure downstream of the nozzle exit. Determines if a shock occurs.</span></label>
+        <input id="pb" type="number" step="any" value="20" />
+        <label class="tooltip">Gamma (γ = cₚ/cᵥ)<span class="tooltiptext">Ratio of specific heats, usually 1.4 for air.</span></label>
+        <input id="gamma" type="number" step="any" value="1.4" />
+        <label class="tooltip">Throat area A* (m²)<span class="tooltiptext">Minimum cross-section of nozzle where Mach = 1 under choked conditions.</span></label>
+        <input id="Ath" type="number" step="any" value="0.01" />
+        <label class="tooltip">Exit area Aₑ (m²)<span class="tooltiptext">Outlet area. The ratio Aₑ/A* determines expansion ratio and Mach number.</span></label>
+        <input id="Aexit" type="number" step="any" value="0.03" />
+        <label class="tooltip">Number of points<span class="tooltiptext">Resolution of the computation along the nozzle.</span></label>
+        <input id="npts" type="number" min="11" value="201" />
+        <label class="tooltip">Allow normal shock?<span class="tooltiptext">If enabled, solver searches for a shock location matching the exit pressure.</span></label>
+        <select id="allowShock"><option value="1">Yes</option><option value="0">No</option></select>
+        <div style="margin-top:12px;display:flex;gap:8px;"><button id="runBtn" class="btn">Run</button></div>
+        <div id="status" class="status">Ready</div>
+      </div>
+
+      <div class="panel" style="flex:0.55;min-width:300px">
+        <h3>Results (divergent section)</h3>
+        <canvas id="plotMach"></canvas>
+        <canvas id="plotPressure"></canvas>
+        <canvas id="plotTemperature"></canvas>
+        <div id="tooltipPlot" style="position:absolute;background:#1e293b;color:white;padding:4px 8px;border-radius:6px;font-size:12px;pointer-events:none;display:none;"></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">
+          <div class="panel" style="flex:1;min-width:180px"><div class="small">Mass flow (kg/s)</div><div id="mDot" style="font-weight:700;font-size:18px">—</div></div>
+          <div class="panel" style="flex:1;min-width:180px"><div class="small">Shock location (fraction)</div><div id="shockLoc" style="font-weight:700;font-size:18px">—</div></div>
+          <div class="panel" style="flex:1;min-width:180px"><div class="small">Throat (Ma,p,T)</div><div id="throatVals" style="font-weight:700;font-size:16px">—</div></div>
+          <div class="panel" style="flex:1;min-width:180px"><div class="small">Exit (Ma,p,T)</div><div id="exitVals" style="font-weight:700;font-size:16px">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Equations: isentropic area–Mach relation (A/A* = f(Ma)) and normal-shock relations for perfect gas. Built for learning and visualization.</footer>
+  </div>
+
+  <script>
+    function setupHiDPICanvas(canvas){const dpr=window.devicePixelRatio||1;const rect=canvas.getBoundingClientRect();canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);return ctx;}
+    function areaMach(M,g){return(1/M)*((2/(g+1))*(1+(g-1)/2*M*M))**((g+1)/(2*(g-1)));}
+    function machFromAreaRatio(A,g,supersonic=true){let M=supersonic?2:0.2;for(let i=0;i<40;i++){const f=areaMach(M,g)-A;const df=(areaMach(M+1e-6,g)-areaMach(M-1e-6,g))/2e-6;M-=f/df;if(M<0.01)M=0.01;if(Math.abs(f)<1e-8)break;}return M;}
+    function isentropicRelations(M,g,p0,T0){const T=T0/(1+(g-1)/2*M*M);const p=p0/((1+(g-1)/2*M*M)**(g/(g-1)));const rho=p*1000/(287*T);return{T,p,rho};}
+    function computeNozzle(p0,T0,pb,g,Ath,Ae,n,allowShock){const A=Array.from({length:n},(_,i)=>Ath+(Ae-Ath)*(i/(n-1)));const Ar=A.map(a=>a/Ath);let M=Ar.map(a=>machFromAreaRatio(a,g,true));let data=M.map((Mi,i)=>{const{T,p,rho}=isentropicRelations(Mi,g,p0,T0);return{x:i/(n-1),A:A[i],M:Mi,T,p,rho};});let shockIndex=-1;if(allowShock){const pe=data[data.length-1].p;if(pb>pe){for(let i=n-2;i>5;i--){const pre=data[i].p;if(pre<pb)continue;const M1=data[i].M;const M2=Math.sqrt((1+0.5*(g-1)*M1*M1)/(g*M1*M1-0.5*(g-1)));data=data.map((d,j)=>j>i?{...d,M:M2,p:data[i].p*(1+2*g/(g+1)*(M1*M1-1)),T:data[i].T*(1+2*(g-1)/(g+1)*(M1*M1-1))}:d);shockIndex=i;break;}}}const throatIndex=data.findIndex(d=>Math.abs(d.M-1)<0.05);const throat=data[throatIndex>=0?throatIndex:Math.floor(n/2)];const mDot=throat.rho*Math.sqrt(g*287*throat.T)*throat.A;return{data,mDot,shockIndex,throatIndex};}
+    function drawSinglePlot(canvasId,data,shockIndex,field,color,label,throatIndex){const canvas=document.getElementById(canvasId);const ctx=setupHiDPICanvas(canvas);const w=canvas.clientWidth,h=canvas.clientHeight;ctx.clearRect(0,0,w,h);const maxV=Math.max(...data.map(d=>d[field]));const minV=Math.min(...data.map(d=>d[field]));const grad=ctx.createLinearGradient(0,0,w,0);grad.addColorStop(0,color);grad.addColorStop(1,'#ffffff');ctx.strokeStyle=grad;ctx.lineWidth=2.5;ctx.beginPath();ctx.shadowBlur=8;ctx.shadowColor=color;data.forEach((d,i)=>{const x=i/(data.length-1)*w;const y=h-(d[field]-minV)/(maxV-minV)*h;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.stroke();ctx.shadowBlur=0;const labelY=h-10;if(throatIndex>=0){ctx.strokeStyle='#22c55e';ctx.setLineDash([4,3]);const x=throatIndex/(data.length-1)*w;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#22c55e';ctx.fillText('Throat',x+4,labelY);}ctx.strokeStyle='#38bdf8';ctx.setLineDash([4,3]);const xE=w;ctx.beginPath();ctx.moveTo(xE,0);ctx.lineTo(xE,h);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#38bdf8';ctx.fillText('Exit',xE-40,labelY);if(shockIndex>0){ctx.strokeStyle='#ef4444';ctx.setLineDash([5,5]);const xS=shockIndex/(data.length-1)*w;ctx.beginPath();ctx.moveTo(xS,0);ctx.lineTo(xS,h);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#ef4444';ctx.fillText('Shock',xS+4,labelY);}ctx.fillStyle='#94a3b8';ctx.font='12px sans-serif';ctx.fillText(label,10,14);canvas.onmousemove=e=>{const r=canvas.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;const i=Math.floor(x*(data.length-1));const d=data[i];const t=document.getElementById('tooltipPlot');t.style.display='block';t.style.left=e.pageX+10+'px';t.style.top=e.pageY-20+'px';t.innerHTML=`x=${d.x.toFixed(2)}, ${label}: ${d[field].toFixed(3)}`;};canvas.onmouseleave=()=>document.getElementById('tooltipPlot').style.display='none';}
+    document.getElementById('runBtn').onclick=()=>{const p0=+document.getElementById('p0').value;const T0=+document.getElementById('T0').value;const pb=+document.getElementById('pb').value;const g=+document.getElementById('gamma').value;const Ath=+document.getElementById('Ath').value;const Ae=+document.getElementById('Aexit').value;const n=+document.getElementById('npts').value;const allowShock=+document.getElementById('allowShock').value;const res=computeNozzle(p0,T0,pb,g,Ath,Ae,n,allowShock);const throat=res.data[res.throatIndex];const exit=res.data[res.data.length-1];document.getElementById('mDot').textContent=res.mDot.toFixed(3);document.getElementById('shockLoc').textContent=res.shockIndex>0?(res.shockIndex/(n-1)).toFixed(2):'None';document.getElementById('throatVals').textContent=`Ma=${throat.M.toFixed(3)}, p=${throat.p.toFixed(2)}, T=${throat.T.toFixed(1)}`;document.getElementById('exitVals').textContent=`Ma=${exit.M.toFixed(3)}, p=${exit.p.toFixed(2)}, T=${exit.T.toFixed(1)}`;drawSinglePlot('plotMach',res.data,res.shockIndex,'M','#22d3ee','Mach number',res.throatIndex);drawSinglePlot('plotPressure',res.data,res.shockIndex,'p','#facc15','Pressure (kPa)',res.throatIndex);drawSinglePlot('plotTemperature',res.data,res.shockIndex,'T','#a78bfa','Temperature (K)',res.throatIndex);document.getElementById('status').textContent='Simulation complete.';};
+  </script>
+</body>
+</html>

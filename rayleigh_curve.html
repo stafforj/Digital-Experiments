@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Rayleigh Flow — Mollier Diagram (h–s)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  <style>
+    body{font-family:Inter,Arial,Helvetica,sans-serif;background:#071026;color:#e6eef8;margin:0;padding:20px}
+    h1{margin:0 0 6px;font-weight:600}
+    .app{max-width:1100px;margin:0 auto}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
+    .card{background:#0b1220;border-radius:12px;padding:14px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    canvas{width:100%!important;height:520px!important}
+    .controls{display:flex;flex-direction:column;gap:10px}
+    label{display:flex;justify-content:space-between;font-size:13px;color:#9fb0d1}
+    input[type=range]{width:180px}
+    input[type=number]{width:110px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    select{padding:6px;border-radius:8px;background:transparent;color:inherit;border:1px solid rgba(255,255,255,0.06)}
+    .muted{font-size:13px;color:#8fa6c8}
+    .stats{margin-top:8px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;font-size:13px}
+    button{padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#7c3aed,#5b21b6);color:white;cursor:pointer}
+    @media(max-width:980px){.grid{grid-template-columns:1fr;}.card{padding:10px}canvas{height:420px!important}}
+    #hoverTip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.75);padding:6px 8px;border-radius:6px;font-size:12px;color:white;z-index:1000;display:none}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Rayleigh Flow — Mollier Diagram (h–s)</h1>
+    <p class="normal">This simulator allows you to visualise the effect of heat addition/removal on the Mach number discussed in Lecture 5: "Compressible Flow with Heat Addition"</p>
+    <div class="muted">Shows the Rayleigh line (h–s curve) for chosen γ and T*. Adjust M₀ and heat Δh to see the change.</div>
+
+    <div class="grid" style="margin-top:14px">
+      <div class="card">
+        <canvas id="mollier"></canvas>
+      </div>
+
+      <div class="card controls">
+        <div>
+          <label>Initial Mach (M₀)
+            <input id="M0" type="number" min="0.01" max="8" step="0.01" value="0.5">
+          </label>
+        </div>
+
+        <div>
+          <label>Heat added (Δh) [kJ/kg]
+            <input id="heat" type="range" min="-200" max="200" step="1" value="0">
+          </label>
+          <div class="muted" style="display:flex;justify-content:space-between;align-items:center"><span>Δh = <strong id="heatVal">0</strong> kJ/kg</span><span class="muted">(negative = cooling)</span></div>
+        </div>
+
+        <div>
+          <label>γ (specific heat ratio)
+            <input id="gamma" type="range" min="1.1" max="1.67" step="0.01" value="1.4">
+          </label>
+          <div class="muted" style="text-align:right">γ = <strong id="gammaVal">1.40</strong></div>
+        </div>
+
+        <div>
+          <label>Reference T* [K]
+            <input id="Tstar" type="number" min="200" max="2000" step="1" value="300">
+          </label>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button id="apply">Apply heat</button>
+          <button id="reset">Reset</button>
+        </div>
+
+        <div class="stats" id="info">
+          <div>Initial: M₀ = <strong id="infoM0">0.50</strong></div>
+          <div>Initial: h = <strong id="infoH0">—</strong> kJ/kg</div>
+          <div>New: M = <strong id="infoM1">—</strong></div>
+          <div>New: h = <strong id="infoH1">—</strong> kJ/kg</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    // Constants and helper functions
+    function air_cp(R, gamma){ return gamma*R/(gamma-1); }
+    function H_of_M(M, gamma){ return ((gamma+1)**2 * M*M) / ((1 + gamma*M*M)**2); }
+    function deltaS_of_M(M, gamma){
+      return Math.log( M*M * ((gamma+1)/(1+gamma*M*M))**((gamma+1)/gamma) );
+    }
+    function hs_from_M(M, gamma, cp, Tstar){
+      const H = H_of_M(M, gamma);
+      const T = Tstar * H;
+      const h = cp * T / 1000.0; 
+      const deltaS = deltaS_of_M(M, gamma);
+      const s = cp * deltaS / 1000.0;
+      return {h, s};
+    }
+    function findMachForH_target(h_target, gamma, cp, Tstar, branch){
+      const EPS = 1e-6;
+      const f = M => hs_from_M(M,gamma,cp,Tstar).h - h_target;
+      let a, b;
+      if(branch==='subsonic'){ a=0.01; b=0.9999; } else { a=1.0001; b=20; }
+      let fa=f(a), fb=f(b);
+      if(fa*fb>0) return null;
+      for(let i=0;i<100;i++){
+        const m=(a+b)/2, fm=f(m);
+        if(Math.abs(fm)<EPS) return m;
+        if(fa*fm<=0){ b=m; fb=fm; } else { a=m; fa=fm; }
+      }
+      return (a+b)/2;
+    }
+
+    // Chart setup
+    const ctx = document.getElementById('mollier').getContext('2d');
+    const mollier = new Chart(ctx, {
+      type: 'scatter',
+      data: {
+        datasets: [
+          { label: 'Rayleigh line', data: [], showLine: true, borderColor: 'rgba(124,58,237,1)', pointRadius: 0, tension: 0.3 },
+          { label: 'Initial state', data: [], borderColor: 'rgba(59,130,246,1)', backgroundColor: 'rgba(59,130,246,1)', pointRadius: 6, showLine:false },
+          { label: 'Heated state', data: [], borderColor: 'rgba(34,197,94,1)', backgroundColor: 'rgba(34,197,94,1)', pointRadius: 6, showLine:false }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' } },
+        scales: {
+          x: { title: { display: true, text: 'Entropy (s) [kJ/kg·K]' } },
+          y: { title: { display: true, text: 'Enthalpy (h) [kJ/kg]' } }
+        }
+      }
+    });
+
+    // DOM references
+    const M0Input = document.getElementById('M0');
+    const heatRange = document.getElementById('heat');
+    const heatVal = document.getElementById('heatVal');
+    const gammaRange = document.getElementById('gamma');
+    const gammaVal = document.getElementById('gammaVal');
+    const TstarInput = document.getElementById('Tstar');
+    const applyBtn = document.getElementById('apply');
+    const resetBtn = document.getElementById('reset');
+    const infoM0 = document.getElementById('infoM0');
+    const infoH0 = document.getElementById('infoH0');
+    const infoM1 = document.getElementById('infoM1');
+    const infoH1 = document.getElementById('infoH1');
+
+    function buildRayleighCurve(gamma, cp, Tstar){
+      const Ms = Array.from({length:500},(_,i)=>0.01+i*(10-0.01)/499);
+      const ray = Ms.map(M => hs_from_M(M,gamma,cp,Tstar))
+                    .map(hs => ({x:hs.s, y:hs.h}));
+      mollier.data.datasets[0].data = ray;
+      mollier.update();
+    }
+
+    function applyHeat(){
+      const M0 = parseFloat(M0Input.value);
+      const gamma = parseFloat(gammaRange.value);
+      const Tstar = parseFloat(TstarInput.value);
+      const cp = air_cp(287,gamma);
+      const delta_h_kJ = parseFloat(heatRange.value);
+
+      const hs0 = hs_from_M(M0,gamma,cp,Tstar);
+      const h0 = hs0.h, s0 = hs0.s;
+      const h1 = h0 + delta_h_kJ;
+      const branch = (M0<1)?'subsonic':'supersonic';
+      const M1 = findMachForH_target(h1,gamma,cp,Tstar,branch);
+      let newPoint = {x:s0, y:h1};
+      if(M1){ const hs1 = hs_from_M(M1,gamma,cp,Tstar); newPoint.x=hs1.s; }
+
+      mollier.data.datasets[1].data = [{x:s0, y:h0}];
+      mollier.data.datasets[2].data = [newPoint];
+      mollier.update();
+
+      infoM0.textContent = M0.toFixed(4);
+      infoH0.textContent = h0.toFixed(4);
+      infoM1.textContent = M1 ? M1.toFixed(6) : '—';
+      infoH1.textContent = h1.toFixed(4);
+    }
+
+    function redrawAll(){
+      const gamma = parseFloat(gammaRange.value);
+      const Tstar = parseFloat(TstarInput.value);
+      const cp = air_cp(287,gamma);
+      buildRayleighCurve(gamma,cp,Tstar);
+      applyHeat();
+    }
+
+    heatRange.addEventListener('input', ()=>{ heatVal.textContent = heatRange.value; });
+    gammaRange.addEventListener('input', ()=>{ gammaVal.textContent = gammaRange.value; redrawAll(); });
+    TstarInput.addEventListener('change', ()=>{ redrawAll(); });
+    M0Input.addEventListener('change', ()=>{ applyHeat(); });
+    applyBtn.addEventListener('click', ()=>{ applyHeat(); });
+    resetBtn.addEventListener('click', ()=>{
+      M0Input.value=0.5; heatRange.value=0; heatVal.textContent='0';
+      gammaRange.value=1.4; gammaVal.textContent='1.40'; TstarInput.value=300;
+      redrawAll();
+    });
+
+    redrawAll();
+  </script>
+</body>
+</html>

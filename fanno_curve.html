@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fanno Flow — Mollier Diagram (h-s)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+ body{font-family:Inter,system-ui,Arial;color:#e6eef8;background:#071026;margin:0;padding:18px}
+ h1{margin:0 0 6px;font-weight:600}
+ .muted{color:#9fb0d1;font-size:13px}
+ .grid{display:grid;grid-template-columns:1fr 360px;gap:16px;margin-top:12px}
+ .card{background:#0b1220;padding:14px;border-radius:10px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+ canvas{width:100%!important;height:520px!important}
+ label{display:flex;justify-content:space-between;font-size:13px;color:#9fb0d1;margin-top:8px}
+ input[type=range]{width:170px}
+ input[type=number]{width:120px;padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+ button{padding:8px 12px;border-radius:8px;border:none;background:linear-gradient(90deg,#7c3aed,#5b21b6);color:white;cursor:pointer}
+ .stats{margin-top:10px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;font-size:13px}
+ #hoverTip{position:fixed;pointer-events:none;background:rgba(0,0,0,0.8);padding:6px 8px;border-radius:6px;font-size:12px;color:white;z-index:1000;display:none}
+ @media(max-width:980px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<h1>Fanno Flow — Mollier Diagram (h-s)</h1>
+<p class="normal">This simulator allows you to visualise the effect of friction on the Mach number discussed in Lecture 6: "Compressible Flow with Friction"</p>
+<div class="muted">Interactive Fanno h–s diagram. Adjust Mach number and friction level to see change.</div>
+
+<div class="grid">
+ <div class="card">
+   <canvas id="hsChart"></canvas>
+   <div id="hoverTip"></div>
+ </div>
+
+ <div class="card">
+   <label>Initial Mach (M₀)
+     <input id="M0" type="number" min="0.02" max="8" step="0.01" value="0.5">
+   </label>
+
+   <label>Add friction Δ(4fL/D)
+     <input id="df" type="range" min="-2" max="8" step="0.01" value="0">
+   </label>
+   <div class="muted" style="display:flex;justify-content:space-between;margin-top:4px">
+     <div>Δ = <strong id="dfVal">0.00</strong></div><div>(+ adds friction)</div>
+   </div>
+
+   <label>γ
+     <input id="gamma" type="range" min="1.1" max="1.67" step="0.01" value="1.4">
+   </label>
+   <div class="muted" style="text-align:right">γ = <strong id="gammaVal">1.40</strong></div>
+
+   <label>Total temperature T₀ [K]
+     <input id="T0" type="number" min="200" max="2000" step="1" value="300">
+   </label>
+
+   <div style="display:flex;gap:8px;margin-top:10px">
+     <button id="apply">Apply Δ</button>
+     <button id="reset">Reset</button>
+   </div>
+
+   <div class="stats" id="info">
+     <div>Initial: M₀ = <strong id="infoM0">—</strong></div>
+     <div>h₀ = <strong id="infoH0">—</strong> kJ/kg, s−s★ = <strong id="infoS0">—</strong> J/kg·K</div>
+     <hr style="border-color:rgba(255,255,255,0.03)">
+     <div>New: M₁ = <strong id="infoM1">—</strong></div>
+     <div>h₁ = <strong id="infoH1">—</strong> kJ/kg, s−s★ = <strong id="infoS1">—</strong> J/kg·K</div>
+     <div>Target equation: <strong>G(M₁) = G(M₀) − Δ(4fL/D)</strong></div>
+     <div>Target G = <strong id="infoGt">—</strong></div>
+   </div>
+
+   <div style="margin-top:8px" class="muted">Entropy is plotted relative to the sonic (★) state. Dashed vertical line marks M = 1.</div>
+ </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+/* ---------- Thermo helpers ---------- */
+function G_of_M(M,g){return(1-M*M)/(g*M*M)+((g+1)/(2*g))*Math.log(((g+1)*M*M)/(2+(g-1)*M*M));}
+function p_over_pstar(M,g){let t=(2/(g+1))*(1+(g-1)/2*M*M);return 1/M/Math.sqrt(t);}
+function T_over_Tstar(M,g){let t=(2/(g+1))*(1+(g-1)/2*M*M);return 1/t;}
+function cp_from_gamma_R(g,R=287){return g*R/(g-1);}
+function Tstatic(T0,M,g){return T0/(1+(g-1)/2*M*M);}
+function s_rel_star(M,g,R=287){let cp=cp_from_gamma_R(g,R);return cp*Math.log(T_over_Tstar(M,g))-R*Math.log(p_over_pstar(M,g));}
+function h_kJ(T,g,R=287){return cp_from_gamma_R(g,R)*T/1000;}
+
+/* ---------- Correct supersonic solver (sampling-based) ---------- */
+function findMachForG_target(Gtarget,gamma,branch){
+  const EPS=1e-10;const f=M=>G_of_M(M,gamma)-Gtarget;
+  if(branch==='subsonic'){
+    let a=0.0001,b=0.999999;let fa=f(a),fb=f(b);
+    if(fa*fb>0)return null;
+    for(let i=0;i<150;i++){let m=0.5*(a+b),fm=f(m);
+      if(Math.abs(fm)<EPS)return m;
+      if(fa*fm<0){b=m;fb=fm;}else{a=m;fa=fm;}
+    }
+    return 0.5*(a+b);
+  }else{
+    const Ms=[],Gs=[];
+    for(let M=1.0001;M<=50;M+=0.01){Ms.push(M);Gs.push(G_of_M(M,gamma));}
+    for(let i=0;i<Ms.length-1;i++){
+      if((Gs[i]-Gtarget)*(Gs[i+1]-Gtarget)<=0){
+        let a=Ms[i],b=Ms[i+1];let fa=f(a),fb=f(b);
+        for(let j=0;j<80;j++){let m=0.5*(a+b),fm=f(m);
+          if(Math.abs(fm)<EPS)return m;
+          if(fa*fm<0){b=m;fb=fm;}else{a=m;fa=fm;}
+        }
+        return 0.5*(a+b);
+      }
+    }
+    return 1.0001; // choked
+  }
+}
+
+/* ---------- Chart ---------- */
+const ctx=document.getElementById('hsChart').getContext('2d');
+const hsChart=new Chart(ctx,{
+ type:'scatter',
+ data:{datasets:[
+   {label:'Fanno line',data:[],showLine:true,borderColor:'#7c3aed',pointRadius:0,tension:0.3},
+   {label:'M=1 ★',data:[],type:'line',borderColor:'rgba(255,255,255,0.3)',borderDash:[6,4],pointRadius:0},
+   {label:'Initial',data:[],showLine:false,borderColor:'#38bdf8',backgroundColor:'#38bdf8',pointRadius:6},
+   {label:'New',data:[],showLine:false,borderColor:'#22c55e',backgroundColor:'#22c55e',pointRadius:6}
+ ]},
+ options:{
+   responsive:true,maintainAspectRatio:false,
+   plugins:{legend:{position:'bottom'}},
+   scales:{
+     x:{title:{display:true,text:'s − s★  (J/kg·K)'}},
+     y:{title:{display:true,text:'h  (kJ/kg)'}}
+   }
+ }
+});
+
+/* ---------- Build Fanno h–s curve ---------- */
+let fannoPoints=[];
+function buildFannoHS(gamma,T0){
+  const pts=[];
+  for(let i=0;i<=1200;i++){
+    const M=0.02+(8-0.02)*i/1200;
+    const T=Tstatic(T0,M,gamma);
+    const s=s_rel_star(M,gamma);
+    const h=h_kJ(T,gamma);
+    pts.push({x:s,y:h,M:M});
+  }
+  fannoPoints=pts;
+  hsChart.data.datasets[0].data=pts;
+  const s1=s_rel_star(1.0,gamma);
+  const hmin=Math.min(...pts.map(p=>p.y)),hmax=Math.max(...pts.map(p=>p.y));
+  hsChart.data.datasets[1].data=[{x:s1,y:hmin},{x:s1,y:hmax}];
+  hsChart.update();
+}
+
+/* ---------- Apply friction change (FIXED: use subtraction) ---------- */
+function applyDelta(){
+  const g=parseFloat(gammaRange.value),T0=parseFloat(T0Input.value);
+  const M0=parseFloat(M0Input.value),df=parseFloat(dfRange.value);
+  const G0=G_of_M(M0,g);
+  // ---- FIX: downstream G target is G0 - df (G(M0) - G(M1) = df) ----
+  const Gtarget = G0 - df;
+  const branch=(M0<1)?'subsonic':'supersonic';
+  const M1=findMachForG_target(Gtarget,g,branch);
+
+  const T0s=Tstatic(T0,M0,g),h0=h_kJ(T0s,g),s0=s_rel_star(M0,g);
+  infoM0.textContent=M0.toFixed(4);
+  infoH0.textContent=h0.toFixed(4);
+  infoS0.textContent=s0.toFixed(4);
+  infoGt.textContent=Gtarget.toFixed(6);
+
+  if(!M1){infoM1.textContent='—';infoH1.textContent='—';infoS1.textContent='—';hsChart.data.datasets[2].data=[{x:s0,y:h0}];hsChart.data.datasets[3].data=[];hsChart.update();return;}
+  const T1=Tstatic(T0,M1,g),h1=h_kJ(T1,g),s1=s_rel_star(M1,g);
+  infoM1.textContent=M1.toFixed(4);
+  infoH1.textContent=h1.toFixed(4);
+  infoS1.textContent=s1.toFixed(4);
+  hsChart.data.datasets[2].data=[{x:s0,y:h0}];
+  hsChart.data.datasets[3].data=[{x:s1,y:h1}];
+  hsChart.update();
+}
+
+/* ---------- Hover tooltip ---------- */
+const hoverTip=document.getElementById('hoverTip');
+document.getElementById('hsChart').addEventListener('mousemove',ev=>{
+  const rect=ev.target.getBoundingClientRect();
+  const x=ev.clientX-rect.left,y=ev.clientY-rect.top;
+  const xScale=hsChart.scales.x,yScale=hsChart.scales.y;
+  let best=null,bestDist=1e9;
+  for(let i=0;i<fannoPoints.length;i+=4){
+    const px=xScale.getPixelForValue(fannoPoints[i].x);
+    const py=yScale.getPixelForValue(fannoPoints[i].y);
+    const d=(px-x)**2+(py-y)**2;
+    if(d<bestDist){bestDist=d;best=fannoPoints[i];}
+  }
+  if(best&&bestDist<900){
+    hoverTip.style.display='block';
+    hoverTip.style.left=(ev.clientX+10)+'px';
+    hoverTip.style.top=(ev.clientY+10)+'px';
+    hoverTip.innerHTML=`M = ${best.M.toFixed(3)}<br>h = ${best.y.toFixed(2)} kJ/kg<br>s−s★ = ${best.x.toFixed(2)} J/kg·K`;
+  }else{hoverTip.style.display='none';}
+});
+document.getElementById('hsChart').addEventListener('mouseleave',()=>{hoverTip.style.display='none';});
+
+/* ---------- DOM & events ---------- */
+const M0Input=document.getElementById('M0');
+const dfRange=document.getElementById('df');const dfVal=document.getElementById('dfVal');
+const gammaRange=document.getElementById('gamma');const gammaVal=document.getElementById('gammaVal');
+const T0Input=document.getElementById('T0');
+const infoM0=document.getElementById('infoM0'),infoH0=document.getElementById('infoH0'),infoS0=document.getElementById('infoS0');
+const infoM1=document.getElementById('infoM1'),infoH1=document.getElementById('infoH1'),infoS1=document.getElementById('infoS1'),infoGt=document.getElementById('infoGt');
+
+dfRange.addEventListener('input',()=>{dfVal.textContent=parseFloat(dfRange.value).toFixed(2);});
+gammaRange.addEventListener('input',()=>{gammaVal.textContent=parseFloat(gammaRange.value).toFixed(2);
+  buildFannoHS(parseFloat(gammaRange.value),parseFloat(T0Input.value));applyDelta();});
+document.getElementById('apply').addEventListener('click',applyDelta);
+M0Input.addEventListener('change',applyDelta);
+T0Input.addEventListener('change',()=>{buildFannoHS(parseFloat(gammaRange.value),parseFloat(T0Input.value));applyDelta();});
+document.getElementById('reset').addEventListener('click',()=>{
+  M0Input.value=0.5;dfRange.value=0;dfVal.textContent='0.00';
+  gammaRange.value=1.4;gammaVal.textContent='1.40';T0Input.value=300;
+  buildFannoHS(1.4,300);applyDelta();
+});
+
+/* ---------- Initialize ---------- */
+buildFannoHS(1.4,300);
+applyDelta();
+</script>
+</body>
+</html>
