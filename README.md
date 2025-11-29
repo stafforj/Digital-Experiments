@@ -1,5 +1,5 @@
 # Digital-Experiments
-This repository contains interactive "digital experiments" that are used within our teaching of Compressible Flows to undergraduate students at the University of Birmingham.
+This repository contains interactive "digital experiments" that are used within our teaching of Compressible Flows to undergraduate students at the University of Birmingham, UK.
 
 _fanno_curve.html_ illustrates the Mollier diagram (h-s) for subsonic and supersonic flows in the presence of friction
 
